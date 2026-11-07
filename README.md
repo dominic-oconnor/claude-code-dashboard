@@ -63,6 +63,13 @@ The dashboard runs on port 3001 by default. To change it, set the `PORT` environ
 PORT=8080 npm start
 ```
 
+By default the dashboard watches `~/.claude/projects`. If you run Claude Code with a different config directory, set the same `CLAUDE_CONFIG_DIR` variable Claude Code uses. Separate several with `:` (`;` on Windows) to watch them all; cards are then tagged with the directory name:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude-work npm start
+CLAUDE_CONFIG_DIR=~/.claude:~/.claude-work npm start
+```
+
 The server binds to `127.0.0.1` only, so session data (prompt snippets, project paths, branch names) is never reachable from other machines on your network. If you deliberately want LAN access, set `HOST`:
 
 ```bash

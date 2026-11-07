@@ -28,6 +28,7 @@ function getOrCreateSession(sessionId) {
   if (!sessions.has(sessionId)) {
     sessions.set(sessionId, {
       sessionId,
+      source: '',      // basename of the config dir this session was read from
       projectHash: '',
       cwd: '',
       label: '',
@@ -77,18 +78,19 @@ function extractActiveFiles(content) {
   return files;
 }
 
-function processEvent(event, projectHash) {
+function processEvent(event, projectHash, source) {
   if (!event || !event.sessionId) return;
   if (event.type === 'file-history-snapshot' || event.type === 'queue-operation' || event.type === 'last-prompt') return;
 
+  if (!event.timestamp) return; // skip events without timestamps (and don't create a phantom session)
   const session = getOrCreateSession(event.sessionId);
-  if (!event.timestamp) return; // skip events without timestamps
   const ts = event.timestamp;
 
   if (!session.startedAt) session.startedAt = ts;
   session.lastEventAt = ts;
   session.lastEventType = event.type;
   session.projectHash = projectHash;
+  session.source = source;
 
   if (event.cwd && !session.cwd) {
     session.cwd = event.cwd;
@@ -230,7 +232,7 @@ function deriveStatus(session) {
 }
 
 // --- JSONL File Processing ---
-function processFile(filePath) {
+function processFile(filePath, source) {
   let stat;
   try { stat = fs.statSync(filePath); } catch { return; }
   const offset = fileOffsets.get(filePath) || 0;
@@ -248,7 +250,7 @@ function processFile(filePath) {
       if (!line.trim()) continue;
       try {
         const event = JSON.parse(line);
-        processEvent(event, projectHash);
+        processEvent(event, projectHash, source);
       } catch (e) {
         // Skip malformed lines (partial writes)
       }
@@ -346,32 +348,58 @@ app.get('/api/sessions', (req, res) => {
 });
 
 // --- Start ---
-const WATCH_DIR = path.join(os.homedir(), '.claude', 'projects');
+// Honour Claude Code's own CLAUDE_CONFIG_DIR. Several dirs can be given,
+// separated by the platform path delimiter (':' on macOS/Linux, ';' on Windows),
+// e.g. CLAUDE_CONFIG_DIR=~/.claude:~/.claude-coralis to watch both.
+function expandHome(p) {
+  return p === '~' || p.startsWith('~/') ? path.join(os.homedir(), p.slice(1)) : p;
+}
+const CONFIG_DIRS = (process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'))
+  .split(path.delimiter)
+  .map(d => d.trim())
+  .filter(Boolean)
+  .map(d => path.resolve(expandHome(d)));
+
+const WATCH_DIRS = [];
+for (const dir of CONFIG_DIRS) {
+  const projectsDir = path.join(dir, 'projects');
+  if (!fs.existsSync(projectsDir)) {
+    console.warn(`Warning: ${projectsDir} does not exist, skipping`);
+    continue;
+  }
+  WATCH_DIRS.push({ dir: projectsDir, source: path.basename(dir) });
+}
+if (WATCH_DIRS.length === 0) {
+  console.error('No config directories to watch. Set CLAUDE_CONFIG_DIR to a Claude Code config dir.');
+  process.exit(1);
+}
 const PORT = Number(process.env.PORT) || 3001;
 // Loopback only. Session data (prompt snippets, paths, branches) must not be
 // readable from the LAN. Set HOST=0.0.0.0 explicitly if you really want that.
 const HOST = process.env.HOST || '127.0.0.1';
 
-console.log(`Watching: ${WATCH_DIR}`);
+for (const w of WATCH_DIRS) console.log(`Watching: ${w.dir}`);
 console.log(`Dashboard: http://localhost:${PORT}`);
-
-// Watch the projects directory (chokidar v5 needs directory, not glob)
-const watcher = chokidar.watch(WATCH_DIR, {
-  persistent: true,
-  ignoreInitial: false,
-  depth: 4, // reach projects/hash/session/subagents/*.jsonl
-  awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
-});
 
 function shouldProcessFile(filePath) {
   return filePath.endsWith('.jsonl') && !path.basename(filePath).includes('compact');
 }
-watcher.on('add', (filePath) => {
-  if (shouldProcessFile(filePath)) processFile(filePath);
-});
-watcher.on('change', (filePath) => {
-  if (shouldProcessFile(filePath)) processFile(filePath);
-});
+
+// One watcher per projects directory (chokidar v5 needs directory, not glob)
+for (const { dir, source } of WATCH_DIRS) {
+  const watcher = chokidar.watch(dir, {
+    persistent: true,
+    ignoreInitial: false,
+    depth: 4, // reach projects/hash/session/subagents/*.jsonl
+    awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+  });
+  watcher.on('add', (filePath) => {
+    if (shouldProcessFile(filePath)) processFile(filePath, source);
+  });
+  watcher.on('change', (filePath) => {
+    if (shouldProcessFile(filePath)) processFile(filePath, source);
+  });
+}
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`Server running on http://${HOST}:${PORT}`);

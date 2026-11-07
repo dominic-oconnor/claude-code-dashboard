@@ -142,6 +142,15 @@
     }
     .perm-badge.bypass { color: var(--red); background: rgba(255,68,68,0.15); }
     .perm-badge.accept-edits { color: var(--yellow); background: rgba(255,204,0,0.12); }
+    .source-badge {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      color: var(--blue);
+      background: rgba(77,171,247,0.12);
+      font-weight: 500;
+      white-space: nowrap;
+    }
 
     /* Subagents */
     .subagents {
@@ -336,7 +345,7 @@
       return 'var(--blue)';
     }
 
-    function SessionCard({ session }) {
+    function SessionCard({ session, showSource }) {
       const [expanded, setExpanded] = useState(false);
       const st = session.status;
       const pct = contextPercent(session.lastTurnInputTotal || session.tokensIn);
@@ -368,6 +377,9 @@
             session.gitBranch ? e('div', { className: 'git-branch' }, session.gitBranch) : null
           ),
           e('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+            showSource && session.source
+              ? e('span', { className: 'source-badge', title: 'Config dir' }, session.source)
+              : null,
             session.permissionMode === 'bypassPermissions'
               ? e('span', { className: 'perm-badge bypass' }, 'YOLO')
               : session.permissionMode === 'acceptEdits'
@@ -481,6 +493,8 @@
       const totalCost = sessions.reduce((s, x) => s + x.costUSD, 0);
       const totalOut = sessions.reduce((s, x) => s + x.tokensOut, 0);
       const activeSessions = sessions.filter(s => s.status === 'thinking' || s.status === 'waiting').length;
+      // Only label cards by config dir when more than one is being watched
+      const showSource = new Set(sessions.map(s => s.source)).size > 1;
 
       return e('div', null,
         // Header
@@ -512,7 +526,7 @@
               e('p', null, 'Start a Claude Code session in any terminal to see it here.')
             )
           : e('div', { className: 'grid' },
-              sessions.map(s => e(SessionCard, { key: s.sessionId, session: s }))
+              sessions.map(s => e(SessionCard, { key: s.sessionId, session: s, showSource }))
             )
       );
     }
