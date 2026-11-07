@@ -260,10 +260,27 @@ function processFile(filePath) {
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Reject requests whose Host header isn't a loopback address. The server already
+// binds to 127.0.0.1, but a malicious website can still reach it via DNS rebinding
+// (a hostname it controls that resolves to 127.0.0.1). Checking Host closes that.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+function requireLocalHost(req, res, next) {
+  const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  if (!LOCAL_HOSTS.has(host)) return res.status(403).json({ error: 'Forbidden host' });
+  next();
+}
+app.use('/api', requireLocalHost);
+
 app.post('/api/open-folder', express.json(), (req, res) => {
-  const folder = req.body.path;
+  const folder = req.body && req.body.path;
   if (!folder || typeof folder !== 'string') return res.status(400).json({ error: 'No path' });
-  if (!fs.existsSync(folder)) return res.status(404).json({ error: 'Folder not found' });
+  // Only allow directories that belong to a tracked session. `open` on an
+  // arbitrary existing file (.app, .command, .terminal) would execute it.
+  const knownCwds = new Set([...sessions.values()].map(s => s.cwd).filter(Boolean));
+  if (!knownCwds.has(folder)) return res.status(403).json({ error: 'Not a tracked session folder' });
+  let stat;
+  try { stat = fs.statSync(folder); } catch { return res.status(404).json({ error: 'Folder not found' }); }
+  if (!stat.isDirectory()) return res.status(400).json({ error: 'Not a directory' });
   const { execFile } = require('child_process');
   const plat = process.platform;
   if (plat === 'win32') {
@@ -331,6 +348,9 @@ app.get('/api/sessions', (req, res) => {
 // --- Start ---
 const WATCH_DIR = path.join(os.homedir(), '.claude', 'projects');
 const PORT = Number(process.env.PORT) || 3001;
+// Loopback only. Session data (prompt snippets, paths, branches) must not be
+// readable from the LAN. Set HOST=0.0.0.0 explicitly if you really want that.
+const HOST = process.env.HOST || '127.0.0.1';
 
 console.log(`Watching: ${WATCH_DIR}`);
 console.log(`Dashboard: http://localhost:${PORT}`);
@@ -353,8 +373,8 @@ watcher.on('change', (filePath) => {
   if (shouldProcessFile(filePath)) processFile(filePath);
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT}`);
 });
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {

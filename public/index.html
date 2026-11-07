@@ -292,8 +292,10 @@
 <body>
   <div id="root"></div>
 
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Vendored from the react@18.3.1 / react-dom@18.3.1 npm tarballs so the
+       dashboard loads no third-party JavaScript. See public/vendor/LICENSE-react. -->
+  <script src="vendor/react-18.3.1.production.min.js"></script>
+  <script src="vendor/react-dom-18.3.1.production.min.js"></script>
   <script>
     const { useState, useEffect, useCallback } = React;
     const e = React.createElement;

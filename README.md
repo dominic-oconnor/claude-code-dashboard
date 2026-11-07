@@ -63,6 +63,19 @@ The dashboard runs on port 3001 by default. To change it, set the `PORT` environ
 PORT=8080 npm start
 ```
 
+The server binds to `127.0.0.1` only, so session data (prompt snippets, project paths, branch names) is never reachable from other machines on your network. If you deliberately want LAN access, set `HOST`:
+
+```bash
+HOST=0.0.0.0 npm start
+```
+
+## Security
+
+- The watcher makes **no outbound network connections**. It reads `~/.claude/projects` and serves it on loopback.
+- React is vendored in `public/vendor/` (byte-identical to the npm `react@18.3.1` tarballs), so the page loads no third-party JavaScript.
+- `/api/*` rejects requests whose `Host` header is not `localhost` or `127.0.0.1`, which blocks DNS-rebinding attacks from malicious websites.
+- `/api/open-folder` only opens directories belonging to a tracked session.
+
 ## Pricing
 
 Token costs are calculated using current Anthropic pricing. The pricing constants are in `watcher.js` — update them if pricing changes:
